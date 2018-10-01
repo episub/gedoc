@@ -10,6 +10,7 @@ import (
 
 	pb "github.com/episub/gedoc/gedoc/lib"
 	"github.com/go-chi/chi"
+	grpc_opentracing "github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
 	"github.com/opentracing-contrib/go-stdlib/nethttp"
 	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -53,7 +54,7 @@ func liveHandler(w http.ResponseWriter, r *http.Request) {
 	defer span.Finish()
 
 	log.Printf("Liveness request received")
-	healthy, err := checkgRPCHealth(opentracing.ContextWithSpan(r.Context(), span))
+	healthy, err := checkGRPCHealth(opentracing.ContextWithSpan(r.Context(), span))
 
 	if err != nil {
 		log.Warningf("Liveness report (%t) had error: %s", healthy, err)
@@ -76,7 +77,7 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	defer span.Finish()
 
 	log.Printf("Health request received")
-	healthy, err := checkgRPCHealth(opentracing.ContextWithSpan(r.Context(), span))
+	healthy, err := checkGRPCHealth(opentracing.ContextWithSpan(r.Context(), span))
 
 	if err != nil {
 		log.Warningf("Liveness report (%t) had error: %s", healthy, err)
@@ -92,12 +93,13 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func checkgRPCHealth(ctx context.Context) (bool, error) {
-	span, _ := opentracing.StartSpanFromContext(ctx, "checkgRPCHealth")
+func checkGRPCHealth(ctx context.Context) (bool, error) {
+	span, _ := opentracing.StartSpanFromContext(ctx, "checkGRPCHealth")
 	defer span.Finish()
 
 	// Set up a local grpc client so that server can query itself for liveness.  This is a better simulation, to ensure that the grpc server is still receiving at least some requests
-	conn, err := grpc.Dial(address, grpc.WithInsecure())
+	//conn, err := grpc.Dial(address, grpc.WithInsecure())
+	conn, err := createClientGRPCConn(opentracing.ContextWithSpan(ctx, span), address)
 
 	if err != nil {
 		return false, err
@@ -115,4 +117,28 @@ func checkgRPCHealth(ctx context.Context) (bool, error) {
 	}
 
 	return r.Healthy, nil
+}
+
+// ctx is the incoming gRPC request's context
+// addr is the address for the new outbound request
+func createClientGRPCConn(ctx context.Context, addr string) (*grpc.ClientConn, error) {
+	span, _ := opentracing.StartSpanFromContext(ctx, "createGRPCConn")
+	defer span.Finish()
+
+	var opts []grpc.DialOption
+
+	opts = append(opts, grpc.WithStreamInterceptor(grpc_opentracing.StreamClientInterceptor()))
+	opts = append(opts, grpc.WithUnaryInterceptor(grpc_opentracing.UnaryClientInterceptor()))
+
+	opts = append(opts, grpc.WithInsecure())
+	if !cfg.Debug {
+		log.Warning("Using grpc.WithInsecure()")
+	}
+
+	conn, err := grpc.DialContext(ctx, addr, opts...)
+	if err != nil {
+		log.Error("Failed to connect to application addr: ", err)
+		return nil, err
+	}
+	return conn, nil
 }

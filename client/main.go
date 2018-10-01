@@ -7,8 +7,8 @@ import (
 	"time"
 
 	pb "github.com/episub/gedoc/gedoc/lib"
+	"github.com/opentracing/opentracing-go"
 	"golang.org/x/net/context"
-	"google.golang.org/grpc"
 )
 
 const (
@@ -17,22 +17,42 @@ const (
 )
 
 func main() {
+	// Opentracing
+	tracer, closer := initJaeger("gRPCclient")
+	defer closer.Close()
+
+	// StartSpanFromContext uses the global tracer, so we need to set it here to
+	// be our jaeger tracer
+	opentracing.SetGlobalTracer(tracer)
+
+	ctx := context.Background()
+
+	fetchPDF(ctx)
+
+	time.Sleep(time.Second * 5)
+}
+
+func fetchPDF(ctx context.Context) {
+	span, _ := opentracing.StartSpanFromContext(ctx, "main")
+	defer span.Finish()
+
 	// Set up a connection to the server.
-	conn, err := grpc.Dial(address, grpc.WithInsecure())
+	//conn, err := grpc.Dial(address, grpc.WithInsecure())
+	conn, err := createClientGRPCConn(ctx, address)
 	if err != nil {
 		log.Fatalf("did not connect: %v", err)
 	}
 	defer conn.Close()
 	c := pb.NewBuilderClient(conn)
 
-	files, err := loadFiles("./examples/latex")
+	files, err := loadFiles(ctx, "./examples/latex")
 	if err != nil {
 		panic(err)
 	}
 	log.Printf("Loaded %d files.", len(files))
 
 	// Contact the server and print out its response.
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*60)
+	ctx, cancel := context.WithTimeout(ctx, time.Second*60)
 	defer cancel()
 	r, err := c.BuildLatex(ctx, &pb.BuildLatexRequest{
 		Files: files,
@@ -47,14 +67,16 @@ func main() {
 		err := ioutil.WriteFile("saved.pdf", r.Data, os.ModePerm)
 
 		if err != nil {
-			panic(err)
+			log.Println("Error saving: ", err)
 		}
 	}
-
 }
 
 // loadFiles loads all files in the listed folder, returning their bytes in an array
-func loadFiles(folder string) ([]*pb.File, error) {
+func loadFiles(ctx context.Context, folder string) ([]*pb.File, error) {
+	span, _ := opentracing.StartSpanFromContext(ctx, "loadFiles")
+	defer span.Finish()
+
 	var files []*pb.File
 	fileNames, err := ioutil.ReadDir(folder)
 

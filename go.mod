@@ -7,6 +7,7 @@ require (
 	github.com/go-chi/chi v3.3.3+incompatible
 	github.com/gofrs/uuid v3.1.0+incompatible
 	github.com/golang/protobuf v1.2.0
+	github.com/grpc-ecosystem/go-grpc-middleware v1.0.0
 	github.com/matttproud/golang_protobuf_extensions v1.0.1 // indirect
 	github.com/opentracing-contrib/go-stdlib v0.0.0-20180702182724-07a764486eb1
 	github.com/opentracing/opentracing-go v1.0.2

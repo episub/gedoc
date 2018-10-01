@@ -11,6 +11,8 @@ import (
 	"github.com/caarlos0/env"
 	pb "github.com/episub/gedoc/gedoc/lib"
 	"github.com/gofrs/uuid"
+	"github.com/grpc-ecosystem/go-grpc-middleware"
+	grpc_opentracing "github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
 	"github.com/opentracing/opentracing-go"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -85,7 +87,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
-	s := grpc.NewServer()
+	s := grpc.NewServer(
+		grpc.StreamInterceptor(grpc_middleware.ChainStreamServer(
+			grpc_opentracing.StreamServerInterceptor(),
+		)),
+		grpc.UnaryInterceptor(grpc_middleware.ChainUnaryServer(
+			grpc_opentracing.UnaryServerInterceptor(),
+		)),
+	)
 	pb.RegisterBuilderServer(s, &server{})
 	// Register reflection service on gRPC server.
 	reflection.Register(s)
