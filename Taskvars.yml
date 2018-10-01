@@ -1,0 +1,10 @@
+docker_image: episub/gedoc
+docker_env: docker_env.txt
+docker_name: gedoc
+docker_network: stack
+docker_workdir: /go/src/github.com/episub/gedoc
+golang_base: "golang:1.11"
+grpc_port: 50051
+metrics_port: 8080
+pwd:
+  sh: echo $PWD
