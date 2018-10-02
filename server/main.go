@@ -13,6 +13,7 @@ import (
 	"github.com/gofrs/uuid"
 	"github.com/grpc-ecosystem/go-grpc-middleware"
 	grpc_opentracing "github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
+	"github.com/h2non/filetype"
 	"github.com/opentracing/opentracing-go"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -35,8 +36,8 @@ var log = logrus.New()
 type server struct{}
 
 // BuildLatex Implements BuildLatex, taking some files and reteurning a PDF
-func (s *server) BuildLatex(ctx context.Context, in *pb.BuildLatexRequest) (*pb.BuildReply, error) {
-	span, _ := opentracing.StartSpanFromContext(ctx, "rpc_BuildLatex")
+func (s *server) BuildLatex(ctx context.Context, in *pb.BuildLatexRequest) (*pb.FileReply, error) {
+	span, _ := opentracing.StartSpanFromContext(ctx, "BuildLatex")
 	defer span.Finish()
 
 	final, err := buildLatexPDF(opentracing.ContextWithSpan(ctx, span), in.Files)
@@ -47,11 +48,32 @@ func (s *server) BuildLatex(ctx context.Context, in *pb.BuildLatexRequest) (*pb.
 		note = err.Error()
 	}
 
-	reply := &pb.BuildReply{
-		Data:     final,
-		FileType: "PDF",
-		Success:  (err == nil),
-		Note:     note,
+	reply := &pb.FileReply{
+		Data:    final,
+		Success: (err == nil),
+		Note:    note,
+	}
+
+	return reply, nil
+}
+
+// Merge Merges the provided files into a single PDF
+func (s *server) Merge(ctx context.Context, in *pb.MergeRequest) (*pb.FileReply, error) {
+	span, _ := opentracing.StartSpanFromContext(ctx, "MergePDF")
+	defer span.Finish()
+
+	final, err := mergeFiles(opentracing.ContextWithSpan(ctx, span), in.Files)
+
+	note := "Merge successful"
+
+	if err != nil {
+		note = err.Error()
+	}
+
+	reply := &pb.FileReply{
+		Data:    final,
+		Success: (err == nil),
+		Note:    note,
 	}
 
 	return reply, nil
@@ -109,18 +131,12 @@ func buildLatexPDF(ctx context.Context, files []*pb.File) ([]byte, error) {
 
 	var final []byte
 
-	// To allow multiple PDF's to be built at once, build in unique folders
-	v4, err := uuid.NewV4()
-
+	// Get a new folder to work in
+	id, folder, err := setupFolder()
 	if err != nil {
 		return final, err
 	}
-
-	folder := v4.String()
-
-	log.Printf("Folder: %s", folder)
-
-	err = os.MkdirAll("build/"+folder, 0766)
+	defer os.RemoveAll(folder)
 
 	if err != nil && !strings.Contains(fmt.Sprintf("%s", err), "file exists") {
 		return final, err
@@ -138,7 +154,7 @@ func buildLatexPDF(ctx context.Context, files []*pb.File) ([]byte, error) {
 
 	// Create the provided files in a unique folder
 	for _, f := range files {
-		err := ioutil.WriteFile("build/"+folder+"/"+f.Name, f.Data, os.ModePerm)
+		err := ioutil.WriteFile(folder+"/"+f.Name, f.Data, os.ModePerm)
 
 		if err != nil {
 			return final, err
@@ -147,10 +163,10 @@ func buildLatexPDF(ctx context.Context, files []*pb.File) ([]byte, error) {
 
 	// Clean, and then run the build
 	clean := exec.Command("latexmk", "-C")
-	cmd := exec.Command("latexmk", fmt.Sprintf("-jobname=%s", folder))
+	cmd := exec.Command("latexmk", fmt.Sprintf("-jobname=%s", id))
 
-	cmd.Dir = "build/" + folder
-	clean.Dir = "build/" + folder
+	cmd.Dir = folder
+	clean.Dir = folder
 
 	log.Printf("Cleaning...")
 	err = clean.Run()
@@ -167,16 +183,7 @@ func buildLatexPDF(ctx context.Context, files []*pb.File) ([]byte, error) {
 	}
 
 	// Load the produced PDF to return
-	final, err = ioutil.ReadFile("build/" + folder + "/" + folder + ".pdf")
-
-	if err != nil {
-		return final, err
-	}
-
-	// Remove temporary folder
-	err = os.RemoveAll("build/" + folder)
-
-	return final, err
+	return ioutil.ReadFile(folder + "/" + id + ".pdf")
 }
 
 func copyLatexSettings(folder string) error {
@@ -186,7 +193,7 @@ func copyLatexSettings(folder string) error {
 		return err
 	}
 
-	dest, err := os.Create("build/" + folder + "/.latexmkrc")
+	dest, err := os.Create(folder + "/.latexmkrc")
 
 	if err != nil {
 		return err
@@ -195,4 +202,117 @@ func copyLatexSettings(folder string) error {
 	_, err = dest.Write(source)
 
 	return err
+}
+
+func mergeFiles(ctx context.Context, files []*pb.File) ([]byte, error) {
+	var merged []byte
+	var prepared [][]byte // We need to store each file as a PDF first before merging
+
+	for _, f := range files {
+		kind, unknown := filetype.Match(f.Data)
+
+		if unknown != nil {
+			return merged, fmt.Errorf("File type for %s unsupported", f.Name)
+		}
+
+		switch kind.Extension {
+		case "pdf":
+			prepared = append(prepared, f.Data)
+		case "jpg", "png":
+			converted, err := imageToPDF(f.Data)
+			if err != nil {
+				return merged, err
+			}
+			prepared = append(prepared, converted)
+		}
+
+		log.Printf("File type for %s: %s (Mime: %s)", f.Name, kind.Extension, kind.MIME.Value)
+	}
+
+	// Get a new folder to work in
+	id, folder, err := setupFolder()
+	if err != nil {
+		return merged, err
+	}
+	defer os.RemoveAll(folder)
+
+	// Create the provided files in a unique folder, and note their names
+	var args []string
+	for i, p := range prepared {
+		where := fmt.Sprintf("%s/%d.pdf", folder, i)
+		log.Printf("Writing %d bytes to %s", len(p), where)
+		err := ioutil.WriteFile(where, p, os.ModePerm)
+
+		if err != nil {
+			log.Printf("ERRORRED")
+			return merged, err
+		}
+		args = append(args, fmt.Sprintf("%d.pdf", i))
+	}
+
+	args = append(args, id+".pdf")
+
+	cmd := exec.Command("pdfunite", args...)
+	cmd.Dir = folder
+
+	// Merge the files
+	err = cmd.Run()
+
+	if err != nil {
+		return merged, err
+	}
+
+	// Load the produced PDF to return
+	merged, err = ioutil.ReadFile(folder + "/" + id + ".pdf")
+
+	if err != nil {
+		return merged, err
+	}
+
+	return merged, nil
+}
+
+func imageToPDF(file []byte) ([]byte, error) {
+	var pdf []byte
+
+	// Get a new folder to work in
+	id, folder, err := setupFolder()
+	if err != nil {
+		return pdf, err
+	}
+	defer os.RemoveAll(folder)
+
+	// Save image so we can work with it
+	err = ioutil.WriteFile(folder+"/img", file, os.ModePerm)
+
+	if err != nil {
+		return pdf, err
+	}
+
+	cmd := exec.Command("convert", "img", "-background", "white", "-page", "a4", id+".pdf")
+	cmd.Dir = folder
+
+	// Create pdf from image
+	err = cmd.Run()
+
+	if err != nil {
+		return pdf, err
+	}
+
+	return ioutil.ReadFile(folder + "/" + id + ".pdf")
+}
+
+// setupFolder Sets up a new folder for building inside.  Returns full folder, uuid, and error
+func setupFolder() (string, string, error) {
+	var id, full string
+	v4, err := uuid.NewV4()
+	if err != nil {
+		return id, full, err
+	}
+
+	id = v4.String()
+	full = "build/" + id
+	err = os.MkdirAll(full, 0766)
+
+	return id, full, err
 }

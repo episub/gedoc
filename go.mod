@@ -8,6 +8,7 @@ require (
 	github.com/gofrs/uuid v3.1.0+incompatible
 	github.com/golang/protobuf v1.2.0
 	github.com/grpc-ecosystem/go-grpc-middleware v1.0.0
+	github.com/h2non/filetype v1.0.5
 	github.com/matttproud/golang_protobuf_extensions v1.0.1 // indirect
 	github.com/opentracing-contrib/go-stdlib v0.0.0-20180702182724-07a764486eb1
 	github.com/opentracing/opentracing-go v1.0.2
@@ -21,4 +22,5 @@ require (
 	github.com/uber/jaeger-lib v1.5.0 // indirect
 	golang.org/x/net v0.0.0-20180926154720-4dfa2610cdf3
 	google.golang.org/grpc v1.15.0
+	gopkg.in/h2non/filetype.v1 v1.0.5 // indirect
 )

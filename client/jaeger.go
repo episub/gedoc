@@ -21,7 +21,7 @@ func initJaeger(service string) (opentracing.Tracer, io.Closer) {
 			Param: 1,
 		},
 		Reporter: &jaegerConfig.ReporterConfig{
-			LogSpans: true,
+			LogSpans: false,
 		},
 	}
 

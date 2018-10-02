@@ -1,11 +1,12 @@
 syntax = "proto3";
 
-package latex;
+package builder;
 
 // Builder Builds package
 service Builder {
 	// BuildLatex Takes latex files and returns a reply
-	rpc BuildLatex (BuildLatexRequest) returns (BuildReply) {}
+	rpc BuildLatex (BuildLatexRequest) returns (FileReply) {}
+	rpc Merge (MergeRequest) returns (FileReply) {}
 	rpc Health (HealthRequest) returns (HealthReply) {}
 }
 
@@ -13,9 +14,8 @@ message BuildLatexRequest {
 	repeated File files = 1;
 }
 
-message BuildReply {
+message FileReply {
 	bytes data = 1;
-	string fileType = 2;
 	bool success = 3;
 	string note = 4;
 }
@@ -23,6 +23,7 @@ message BuildReply {
 message File {
 	string name = 1;
 	bytes data = 2;
+	string folder = 3;
 }
 
 message HealthReply {
@@ -30,4 +31,8 @@ message HealthReply {
 }
 
 message HealthRequest {
+}
+
+message MergeRequest {
+	repeated File files = 1;
 }

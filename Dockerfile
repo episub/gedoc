@@ -3,7 +3,7 @@ FROM golang:1.11
 WORKDIR /go/src/github.com/episub/gedoc/
 COPY . .
 RUN GO111MODULE=on go mod vendor
-RUN go build server/main.go
+RUN go build server/*go
 
 FROM episub/gedoc-base
 RUN mkdir -p /gedoc/build

@@ -27,13 +27,52 @@ func main() {
 
 	ctx := context.Background()
 
+	mergeFiles(ctx)
 	fetchPDF(ctx)
+}
 
-	time.Sleep(time.Second * 5)
+func mergeFiles(ctx context.Context) {
+	span, _ := opentracing.StartSpanFromContext(ctx, "mergeFiles")
+	defer span.Finish()
+
+	// Set up a connection to the server.
+	//conn, err := grpc.Dial(address, grpc.WithInsecure())
+	conn, err := createClientGRPCConn(ctx, address)
+	if err != nil {
+		log.Fatalf("did not connect: %v", err)
+	}
+	defer conn.Close()
+	c := pb.NewBuilderClient(conn)
+
+	files, err := loadFiles(ctx, "./examples/merge")
+	if err != nil {
+		panic(err)
+	}
+	log.Printf("Loaded %d files.", len(files))
+
+	// Contact the server and print out its response.
+	ctx, cancel := context.WithTimeout(ctx, time.Second*60)
+	defer cancel()
+	r, err := c.Merge(ctx, &pb.MergeRequest{
+		Files: files,
+	})
+	if err != nil {
+		log.Fatalf("could not greet: %v", err)
+	}
+	log.Printf("Success: %t. Note: %s", r.Success, r.Note)
+
+	if r.Success {
+		log.Printf("Saving")
+		err := ioutil.WriteFile("merged.pdf", r.Data, os.ModePerm)
+
+		if err != nil {
+			log.Println("Error saving: ", err)
+		}
+	}
 }
 
 func fetchPDF(ctx context.Context) {
-	span, _ := opentracing.StartSpanFromContext(ctx, "main")
+	span, _ := opentracing.StartSpanFromContext(ctx, "fetchPDF")
 	defer span.Finish()
 
 	// Set up a connection to the server.
