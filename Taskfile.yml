@@ -13,7 +13,7 @@ build_go:
   desc: Build all go files
   deps: [build_proto, vendor]
   cmds:
-    - go build -o main server/*go
+    - cd server && go build -o server
   generates:
     - ./main
 build:
@@ -23,9 +23,13 @@ build:
 run_local:
   deps: [build_go]
   cmds:
-    # Disabled for now so that it can reach jaeger via host ports
-    - docker run --rm --network={{.docker_network}} -p {{.metrics_port}}:{{.metrics_port}} -p {{.grpc_port}}:{{.grpc_port}} -e "JAEGER_AGENT_HOST=jaeger-stack" -e "PORT={{.grpc_port}}" -e "INTERNAL_PORT={{.metrics_port}}" -v {{.pwd}}:/gedoc --name {{.docker_name}} episub/gedoc
-      #- PORT={{.grpc_port}} INTERNAL_PORT={{.metrics_port}} go run server/*go
+    - docker run -ti --rm --network={{.docker_network}} -p {{.metrics_port}}:{{.metrics_port}} -p {{.grpc_port}}:{{.grpc_port}} -e "JAEGER_AGENT_HOST=jaeger-stack" -e "PORT={{.grpc_port}}" -e "INTERNAL_PORT={{.metrics_port}}" -v {{.pwd}}/server:/gedoc --name {{.docker_name}} episub/gedoc /gedoc/server
+test:
+  cmds:
+    - docker run --rm --network={{.docker_network}} -v {{.pwd}}:{{.pwd}} -w {{.pwd}} --name {{.docker_name}}_test episub/gedoc-base go test ./...
+test_local:
+  cmds:
+    - go test ./...
 jaeger_start:
   cmds:
     - |
