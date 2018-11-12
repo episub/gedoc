@@ -5,6 +5,6 @@ docker_network: stack
 docker_workdir: /go/src/github.com/episub/gedoc
 golang_base: "golang:1.11"
 grpc_port: 50051
-metrics_port: 8080
+metrics_port: 8281
 pwd:
   sh: echo $PWD

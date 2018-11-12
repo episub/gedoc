@@ -169,16 +169,18 @@ func buildLatexPDF(ctx context.Context, files []*pb.File) ([]byte, error) {
 	clean.Dir = folder
 
 	log.Printf("Cleaning...")
-	err = clean.Run()
+	out, err := clean.Output()
 
 	if err != nil {
+		log.Printf("%s", out)
 		return final, err
 	}
 
 	log.Printf("Building...")
-	err = cmd.Run()
+	out, err = cmd.Output()
 
 	if err != nil {
+		log.Printf("%s", out)
 		return final, err
 	}
 
