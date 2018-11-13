@@ -8,6 +8,6 @@ RUN cd server && go build -o server
 FROM episub/gedoc-base
 RUN mkdir -p /gedoc/build
 WORKDIR /gedoc
-COPY --from=builder /go/src/github.com/episub/gedoc/server/server /main
+COPY --from=builder /go/src/github.com/episub/gedoc/server/server /server
 COPY server/build/.latexmkrc /gedoc/build
-CMD ["./main"]
+CMD ["/server"]
