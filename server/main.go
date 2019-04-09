@@ -67,6 +67,7 @@ func (s *server) Merge(ctx context.Context, in *pb.MergeRequest) (*pb.FileReply,
 	note := "Merge successful"
 
 	if err != nil {
+		log.Printf("Merge failed: %s", err)
 		note = err.Error()
 	}
 
