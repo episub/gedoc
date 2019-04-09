@@ -240,7 +240,12 @@ func mergeFiles(ctx context.Context, files []*pb.File) ([]byte, error) {
 	defer os.RemoveAll(folder)
 
 	// Create the provided files in a unique folder, and note their names
-	var args []string
+	outName := id + ".pdf"
+	var args = []string{
+		"--empty",
+		outName,
+		"--pages",
+	}
 	for i, p := range prepared {
 		where := fmt.Sprintf("%s/%d.pdf", folder, i)
 		log.Printf("Writing %d bytes to %s", len(p), where)
@@ -251,11 +256,12 @@ func mergeFiles(ctx context.Context, files []*pb.File) ([]byte, error) {
 			return merged, err
 		}
 		args = append(args, fmt.Sprintf("%d.pdf", i))
+		args = append(args, "1-z")
 	}
 
-	args = append(args, id+".pdf")
+	args = append(args, "--")
 
-	cmd := exec.Command("pdfunite", args...)
+	cmd := exec.Command("qpdf", args...)
 	cmd.Dir = folder
 
 	// Merge the files
