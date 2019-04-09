@@ -10,4 +10,5 @@ RUN mkdir -p /gedoc/build
 WORKDIR /gedoc
 COPY --from=builder /go/src/github.com/episub/gedoc/server/server /server
 COPY server/build/.latexmkrc /gedoc/build
+COPY policy.xml /etc/ImageMagick-6/policy.xml
 CMD ["/server"]

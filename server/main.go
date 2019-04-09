@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io/ioutil"
 	"net"
@@ -225,7 +226,7 @@ func mergeFiles(ctx context.Context, files []*pb.File) ([]byte, error) {
 		case "jpg", "png":
 			converted, err := imageToPDF(f.Data)
 			if err != nil {
-				return merged, err
+				return merged, fmt.Errorf("Failed to convert image %s to pdf: %s", f.Name, err)
 			}
 			prepared = append(prepared, converted)
 		}
@@ -269,14 +270,14 @@ func mergeFiles(ctx context.Context, files []*pb.File) ([]byte, error) {
 	err = cmd.Run()
 
 	if err != nil {
-		return merged, err
+		return merged, fmt.Errorf("Failed merging pdf files: %s", err)
 	}
 
 	// Load the produced PDF to return
 	merged, err = ioutil.ReadFile(folder + "/" + id + ".pdf")
 
 	if err != nil {
-		return merged, err
+		return merged, fmt.Errorf("Failed reading produced PDF: %s", err)
 	}
 
 	return merged, nil
@@ -303,10 +304,12 @@ func imageToPDF(file []byte) ([]byte, error) {
 	cmd.Dir = folder
 
 	// Create pdf from image
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	err = cmd.Run()
 
 	if err != nil {
-		return pdf, err
+		return pdf, fmt.Errorf(err.Error() + ": " + stderr.String())
 	}
 
 	return ioutil.ReadFile(folder + "/" + id + ".pdf")
