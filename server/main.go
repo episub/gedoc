@@ -116,6 +116,7 @@ func main() {
 		grpc.UnaryInterceptor(grpc_middleware.ChainUnaryServer(
 			grpc_opentracing.UnaryServerInterceptor(),
 		)),
+		grpc.MaxMsgSize(1024000000),
 	)
 	pb.RegisterBuilderServer(s, &server{})
 	// Register reflection service on gRPC server.
