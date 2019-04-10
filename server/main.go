@@ -300,7 +300,7 @@ func imageToPDF(file []byte) ([]byte, error) {
 		return pdf, err
 	}
 
-	cmd := exec.Command("convert", "img", "-background", "white", "-page", "a4", id+".pdf")
+	cmd := exec.Command("convert", "img", "-resize", "595x842", "-background", "white", "-page", "a4", id+".pdf")
 	cmd.Dir = folder
 
 	// Create pdf from image
