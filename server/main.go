@@ -7,7 +7,9 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/caarlos0/env"
 	pb "github.com/episub/gedoc/gedoc/lib"
@@ -123,9 +125,26 @@ func main() {
 	pb.RegisterBuilderServer(s, &server{})
 	// Register reflection service on gRPC server.
 	reflection.Register(s)
+
+	go gracefulStopChecker(s)
+
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)
 	}
+}
+
+func gracefulStopChecker(s *grpc.Server) {
+	var gracefulStop = make(chan os.Signal)
+	signal.Notify(gracefulStop, syscall.SIGTERM)
+	signal.Notify(gracefulStop, syscall.SIGKILL)
+	signal.Notify(gracefulStop, syscall.SIGINT)
+
+	sig := <-gracefulStop
+	fmt.Printf("caught sig: %+v", sig)
+	if s != nil {
+		s.GracefulStop()
+	}
+	os.Exit(0)
 }
 
 func buildLatexPDF(ctx context.Context, files []*pb.File) ([]byte, error) {
