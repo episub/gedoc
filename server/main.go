@@ -288,7 +288,7 @@ func mergeFiles(ctx context.Context, files []*pb.File) ([]byte, error) {
 	// Merge the files
 	err = cmd.Run()
 
-	if err != nil {
+	if err != nil && !strings.Contains(err.Error(), "exit status 3") {
 		return merged, fmt.Errorf("Failed merging pdf files: %s", err)
 	}
 
