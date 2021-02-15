@@ -1,8 +1,7 @@
-FROM golang:1.13 as builder
+FROM golang:1.15 as builder
 
 WORKDIR /go/src/github.com/episub/gedoc/
 COPY . .
-RUN GO111MODULE=on go mod vendor
 RUN cd server && go build -o server
 
 FROM episub/gedoc-base

@@ -1,49 +1,77 @@
-# github.com/go-task/task
-build_proto:
-  cmds:
-    - docker run --rm -v {{.pwd}}:{{.pwd}} -w {{.pwd}} znly/protoc -I {{.proto_import}} --go_out=plugins=grpc,import_path=grpc:{{.proto_export}} {{.proto_import}}/*.proto
-  vars:
-    proto_import: gedoc/protocol
-    proto_export: gedoc/lib
-  sources:
-    - ./{{.proto_import}}/*.proto
-  generates:
-    - ./{{.proto_export}}/*.pb.go
-build_go:
-  desc: Build all go files
-  deps: [build_proto, vendor]
-  cmds:
-    - cd server && go build -o server
-  generates:
-    - ./main
-build:
-  deps: [build_go]
-  cmds:
-    - docker build -t {{.docker_image}} .
-run_local:
-  deps: [build_go]
-  cmds:
-    - docker run -ti --rm --network={{.docker_network}} -p {{.metrics_port}}:{{.metrics_port}} -p {{.grpc_port}}:{{.grpc_port}} -e "JAEGER_AGENT_HOST=jaeger-stack" -e "PORT={{.grpc_port}}" -e "INTERNAL_PORT={{.metrics_port}}" -v {{.pwd}}/server:/gedoc --name {{.docker_name}} episub/gedoc /gedoc/server
-test:
-  cmds:
-    - docker run --rm --network={{.docker_network}} -v {{.pwd}}:{{.pwd}} -w {{.pwd}} --name {{.docker_name}}_test episub/gedoc-base go test ./...
-test_local:
-  cmds:
-    - go test ./...
-jaeger_start:
-  cmds:
-    - |
-      docker run -d --name {{.docker_jaeger_name}} \
+version: '3'
+
+vars:
+  docker_image: episub/gedoc
+  docker_env: docker_env.txt
+  docker_name: gedoc
+  docker_network: stack
+  docker_workdir: /go/src/github.com/episub/gedoc
+  grpc_port: 50051
+  metrics_port: 8281
+  pwd:
+    sh: echo $PWD
+
+tasks:
+  build_proto:
+    cmds:
+      - docker run --rm -v {{.pwd}}:{{.pwd}} -w {{.pwd}} znly/protoc -I {{.proto_import}} --go_out=plugins=grpc,import_path=grpc:{{.proto_export}} {{.proto_import}}/*.proto
+    vars:
+      proto_import: gedoc/protocol
+      proto_export: gedoc/lib
+    sources:
+      - ./{{.proto_import}}/*.proto
+    generates:
+      - ./{{.proto_export}}/*.pb.go
+
+  build_go:
+    desc: Build all go files
+    deps: [build_proto]
+    cmds:
+      - cd server && go build -o server
+    env:
+      CGO_ENABLED: 0 
+      GOOS: linux 
+    generates:
+      - ./main
+
+  build:
+    deps: [build_go]
+    cmds:
+      - docker build -t {{.docker_image}} .
+
+  run_local:
+    deps: [build_go]
+    cmds:
+      - |
+        docker run -ti --rm \
         --network={{.docker_network}} \
-        -e COLLECTOR_ZIPKIN_HTTP_PORT=9411 \
-        -p 5775:5775/udp \
-        -p 6831:6831/udp \
-        -p 6832:6832/udp \
-        -p 5778:5778 \
-        -p 16686:16686 \
-        -p 14268:14268 \
-        -p 9411:9411 \
-        jaegertracing/all-in-one:latest
-vendor:
-  cmds:
-    - GO111MODULE=on go mod vendor
+        -p {{.metrics_port}}:{{.metrics_port}} \
+        -p {{.grpc_port}}:{{.grpc_port}} \
+        -e "JAEGER_AGENT_HOST=jaeger-stack" \
+        -e "PORT={{.grpc_port}}" \
+        -e "INTERNAL_PORT={{.metrics_port}}" \
+        -v {{.pwd}}/server:/gedoc \
+        --name {{.docker_name}} episub/gedoc /gedoc/server
+
+  test:
+    cmds:
+      - docker run --rm --network={{.docker_network}} -v {{.pwd}}:{{.pwd}} -w {{.pwd}} --name {{.docker_name}}_test episub/gedoc-base go test ./...
+
+  test_local:
+    cmds:
+      - go test ./...
+
+  jaeger_start:
+    cmds:
+      - |
+        docker run -d --name {{.docker_jaeger_name}} \
+          --network={{.docker_network}} \
+          -e COLLECTOR_ZIPKIN_HTTP_PORT=9411 \
+          -p 5775:5775/udp \
+          -p 6831:6831/udp \
+          -p 6832:6832/udp \
+          -p 5778:5778 \
+          -p 16686:16686 \
+          -p 14268:14268 \
+          -p 9411:9411 \
+          jaegertracing/all-in-one:latest
