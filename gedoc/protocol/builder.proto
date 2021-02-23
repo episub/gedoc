@@ -35,4 +35,5 @@ message HealthRequest {
 
 message MergeRequest {
 	repeated File files = 1;
+	bool force_even = 2;
 }

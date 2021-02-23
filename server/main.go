@@ -8,14 +8,15 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 
-	"github.com/caarlos0/env"
+	"github.com/caarlos0/env/v6"
 	pb "github.com/episub/gedoc/gedoc/lib"
 	"github.com/gofrs/uuid"
 	"github.com/grpc-ecosystem/go-grpc-middleware"
-	grpc_opentracing "github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
+	grpcopentracing "github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
 	"github.com/h2non/filetype"
 	"github.com/opentracing/opentracing-go"
 	"github.com/sirupsen/logrus"
@@ -45,7 +46,7 @@ func (s *server) BuildLatex(ctx context.Context, in *pb.BuildLatexRequest) (*pb.
 
 	final, err := buildLatexPDF(opentracing.ContextWithSpan(ctx, span), in.Files)
 
-	note := "Build successful"
+	note := "build successful"
 
 	if err != nil {
 		note = err.Error()
@@ -53,7 +54,7 @@ func (s *server) BuildLatex(ctx context.Context, in *pb.BuildLatexRequest) (*pb.
 
 	reply := &pb.FileReply{
 		Data:    final,
-		Success: (err == nil),
+		Success: err == nil,
 		Note:    note,
 	}
 
@@ -65,18 +66,18 @@ func (s *server) Merge(ctx context.Context, in *pb.MergeRequest) (*pb.FileReply,
 	span, _ := opentracing.StartSpanFromContext(ctx, "MergePDF")
 	defer span.Finish()
 
-	final, err := mergeFiles(opentracing.ContextWithSpan(ctx, span), in.Files)
+	final, err := mergeFiles(opentracing.ContextWithSpan(ctx, span), in.Files, in.ForceEven)
 
-	note := "Merge successful"
+	note := "merge successful"
 
 	if err != nil {
-		log.Printf("Merge failed: %s", err)
+		log.Errorf("merge failed: %s", err)
 		note = err.Error()
 	}
 
 	reply := &pb.FileReply{
 		Data:    final,
-		Success: (err == nil),
+		Success: err == nil,
 		Note:    note,
 	}
 
@@ -99,6 +100,10 @@ func main() {
 		log.Fatal(err)
 	}
 
+	if cfg.Debug {
+		log.SetLevel(logrus.DebugLevel)
+	}
+
 	tracer, closer := initJaeger(cfg.ServiceName)
 	defer closer.Close()
 
@@ -115,10 +120,10 @@ func main() {
 	}
 	s := grpc.NewServer(
 		grpc.StreamInterceptor(grpc_middleware.ChainStreamServer(
-			grpc_opentracing.StreamServerInterceptor(),
+			grpcopentracing.StreamServerInterceptor(),
 		)),
 		grpc.UnaryInterceptor(grpc_middleware.ChainUnaryServer(
-			grpc_opentracing.UnaryServerInterceptor(),
+			grpcopentracing.UnaryServerInterceptor(),
 		)),
 		grpc.MaxMsgSize(1024000000),
 	)
@@ -165,7 +170,7 @@ func buildLatexPDF(ctx context.Context, files []*pb.File) ([]byte, error) {
 	}
 
 	if len(files) == 0 {
-		return final, fmt.Errorf("Must provide one or more files")
+		return final, fmt.Errorf("must provide one or more files")
 	}
 
 	// Use our predefined settings
@@ -228,7 +233,7 @@ func copyLatexSettings(folder string) error {
 	return err
 }
 
-func mergeFiles(ctx context.Context, files []*pb.File) ([]byte, error) {
+func mergeFiles(ctx context.Context, files []*pb.File, forceEven bool) ([]byte, error) {
 	var merged []byte
 	var prepared [][]byte // We need to store each file as a PDF first before merging
 
@@ -236,7 +241,7 @@ func mergeFiles(ctx context.Context, files []*pb.File) ([]byte, error) {
 		kind, unknown := filetype.Match(f.Data)
 
 		if unknown != nil {
-			return merged, fmt.Errorf("File type for %s unsupported", f.Name)
+			return merged, fmt.Errorf("file type for %s unsupported", f.Name)
 		}
 
 		switch kind.Extension {
@@ -245,12 +250,12 @@ func mergeFiles(ctx context.Context, files []*pb.File) ([]byte, error) {
 		case "jpg", "png":
 			converted, err := imageToPDF(f.Data)
 			if err != nil {
-				return merged, fmt.Errorf("Failed to convert image %s to pdf: %s", f.Name, err)
+				return merged, fmt.Errorf("failed to convert image %s to pdf: %s", f.Name, err)
 			}
 			prepared = append(prepared, converted)
 		}
 
-		log.Printf("File type for %s: %s (Mime: %s)", f.Name, kind.Extension, kind.MIME.Value)
+		log.Infof("file type for %s: %s (Mime: %s)", f.Name, kind.Extension, kind.MIME.Value)
 	}
 
 	// Get a new folder to work in
@@ -269,15 +274,41 @@ func mergeFiles(ctx context.Context, files []*pb.File) ([]byte, error) {
 	}
 	for i, p := range prepared {
 		where := fmt.Sprintf("%s/%d.pdf", folder, i)
-		log.Printf("Writing %d bytes to %s", len(p), where)
-		err := ioutil.WriteFile(where, p, os.ModePerm)
+		pdfFileName := fmt.Sprintf("%d.pdf", i)
+		log.Debugf("writing %d bytes to %s", len(p), where)
 
-		if err != nil {
-			log.Printf("ERRORRED")
+		if err := ioutil.WriteFile(where, p, os.ModePerm); err != nil {
 			return merged, err
 		}
-		args = append(args, fmt.Sprintf("%d.pdf", i))
-		args = append(args, "1-z")
+
+		if forceEven {
+			wd, _ := os.Getwd()
+			log.Debugf("working in %s", wd)
+			// read file back and check page number, if odd then merge blank.pdf to the end
+			cmd := exec.Command("qpdf", "--show-npages", pdfFileName)
+			cmd.Dir = folder
+			out, err := cmd.Output()
+			if err != nil {
+				return merged, fmt.Errorf("exec qpdf page count: %v", err)
+			}
+
+			pageCount, err := strconv.Atoi(strings.TrimSpace(string(out)))
+			if err != nil {
+				return merged, fmt.Errorf("show-npages output to int: %v", err)
+			}
+			isOdd := pageCount%2 == 1
+			log.Debugf("%s is %d pages long and is odd = %v", pdfFileName, pageCount, isOdd)
+
+			if isOdd {
+				blankMergeCmd := exec.Command("qpdf", "--replace-input", pdfFileName, "--pages", pdfFileName, "../blank.pdf", "--")
+				blankMergeCmd.Dir = folder
+				if err := blankMergeCmd.Run(); err != nil {
+					return merged, fmt.Errorf("adding blank to odd numberd statement: %v", err)
+				}
+			}
+		}
+
+		args = append(args, pdfFileName)
 	}
 
 	args = append(args, "--")
@@ -286,17 +317,16 @@ func mergeFiles(ctx context.Context, files []*pb.File) ([]byte, error) {
 	cmd.Dir = folder
 
 	// Merge the files
-	err = cmd.Run()
-
-	if err != nil && !strings.Contains(err.Error(), "exit status 3") {
-		return merged, fmt.Errorf("Failed merging pdf files: %s", err)
+	log.Debug("merge exec: ", cmd.String())
+	if err = cmd.Run(); err != nil && !strings.Contains(err.Error(), "exit status 3") {
+		return merged, fmt.Errorf("failed merging pdf files: %s", err)
 	}
 
 	// Load the produced PDF to return
 	merged, err = ioutil.ReadFile(folder + "/" + id + ".pdf")
 
 	if err != nil {
-		return merged, fmt.Errorf("Failed reading produced PDF: %s", err)
+		return merged, fmt.Errorf("failed reading produced PDF: %s", err)
 	}
 
 	return merged, nil

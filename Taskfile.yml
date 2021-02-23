@@ -50,6 +50,7 @@ tasks:
         -e "JAEGER_AGENT_HOST=jaeger-stack" \
         -e "PORT={{.grpc_port}}" \
         -e "INTERNAL_PORT={{.metrics_port}}" \
+        -e "DEBUG=true" \
         -v {{.pwd}}/server:/gedoc \
         --name {{.docker_name}} episub/gedoc /gedoc/server
 
