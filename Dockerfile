@@ -16,3 +16,5 @@ COPY policy.xml /etc/ImageMagick-6/policy.xml
 HEALTHCHECK --timeout=3s \
   CMD curl -f http://localhost:50052/health || exit 1
 CMD ["/server"]
+
+EXPOSE 50051
