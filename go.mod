@@ -1,6 +1,6 @@
 module github.com/episub/gedoc
 
-go 1.15
+go 1.16
 
 require (
 	github.com/HdrHistogram/hdrhistogram-go v1.0.1 // indirect
