@@ -303,7 +303,7 @@ func mergeFiles(ctx context.Context, files []*pb.File, forceEven bool) ([]byte, 
 				blankMergeCmd := exec.Command("qpdf", "--replace-input", pdfFileName, "--pages", pdfFileName, "../blank.pdf", "--")
 				blankMergeCmd.Dir = folder
 				if err := blankMergeCmd.Run(); err != nil {
-					return merged, fmt.Errorf("adding blank to odd numberd statement: %v", err)
+					return merged, fmt.Errorf("adding blank to odd numberd pdf %d: %v", i, err)
 				}
 			}
 		}
