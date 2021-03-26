@@ -15,7 +15,7 @@ import (
 	"github.com/caarlos0/env/v6"
 	pb "github.com/episub/gedoc/gedoc/lib"
 	"github.com/gofrs/uuid"
-	"github.com/grpc-ecosystem/go-grpc-middleware"
+	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
 	grpcopentracing "github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
 	"github.com/h2non/filetype"
 	"github.com/opentracing/opentracing-go"
@@ -31,6 +31,7 @@ type config struct {
 	Debug        bool   `env:"DEBUG" envDefault:"false"`
 	DebugSpans   bool   `env:"DEBUG_SPANS" envDefault:"false"`
 	ServiceName  string `env:"SERVICE_NAME" envDefault:"gedoc"`
+	PdfBlankPath string `env:"PDF_BLANK_PATH" envDefault:"/gedoc/blank.pdf"`
 }
 
 var cfg config
@@ -125,7 +126,7 @@ func main() {
 		grpc.UnaryInterceptor(grpc_middleware.ChainUnaryServer(
 			grpcopentracing.UnaryServerInterceptor(),
 		)),
-		grpc.MaxMsgSize(1024000000),
+		grpc.MaxRecvMsgSize(1024000000),
 	)
 	pb.RegisterBuilderServer(s, &server{})
 	// Register reflection service on gRPC server.
@@ -300,7 +301,7 @@ func mergeFiles(ctx context.Context, files []*pb.File, forceEven bool) ([]byte, 
 			log.Debugf("%s is %d pages long and is odd = %v", pdfFileName, pageCount, isOdd)
 
 			if isOdd {
-				blankMergeCmd := exec.Command("qpdf", "--replace-input", pdfFileName, "--pages", pdfFileName, "../blank.pdf", "--")
+				blankMergeCmd := exec.Command("qpdf", "--replace-input", pdfFileName, "--pages", pdfFileName, cfg.PdfBlankPath, "--")
 				blankMergeCmd.Dir = folder
 				if err := blankMergeCmd.Run(); err != nil {
 					return merged, fmt.Errorf("adding blank to odd numberd pdf %d: %v", i, err)

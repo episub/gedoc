@@ -11,6 +11,7 @@ FROM episub/gedoc-base
 RUN mkdir -p /gedoc/build
 WORKDIR /gedoc
 COPY --from=builder /go/src/github.com/episub/gedoc/server/server /server
+COPY server/blank.pdf /gedoc
 COPY server/build/.latexmkrc /gedoc/build
 COPY policy.xml /etc/ImageMagick-6/policy.xml
 HEALTHCHECK --timeout=3s \
