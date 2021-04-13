@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net"
 	"os"
@@ -37,7 +38,6 @@ type config struct {
 var cfg config
 var log = logrus.New()
 
-// server is used to implement helloworld.GreeterServer.
 type server struct{}
 
 // BuildLatex Implements BuildLatex, taking some files and reteurning a PDF
@@ -86,7 +86,7 @@ func (s *server) Merge(ctx context.Context, in *pb.MergeRequest) (*pb.FileReply,
 }
 
 // Health Implements health, and simply returns true for now.  If server is unreachable, no reply will be given
-func (s *server) Health(ctx context.Context, in *pb.HealthRequest) (*pb.HealthReply, error) {
+func (s *server) Health(ctx context.Context, _ *pb.HealthRequest) (*pb.HealthReply, error) {
 	span, _ := opentracing.StartSpanFromContext(ctx, "rpc_Health")
 	defer span.Finish()
 
@@ -95,8 +95,8 @@ func (s *server) Health(ctx context.Context, in *pb.HealthRequest) (*pb.HealthRe
 
 func main() {
 	log.Infof("gedoc service")
-	err := env.Parse(&cfg)
 
+	err := env.Parse(&cfg)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -106,7 +106,12 @@ func main() {
 	}
 
 	tracer, closer := initJaeger(cfg.ServiceName)
-	defer closer.Close()
+	defer func(closer io.Closer) {
+		err := closer.Close()
+		if err != nil {
+			log.Fatal(err)
+		}
+	}(closer)
 
 	// StartSpanFromContext uses the global tracer, so we need to set it here to
 	// be our jaeger tracer
@@ -159,30 +164,39 @@ func buildLatexPDF(ctx context.Context, files []*pb.File) ([]byte, error) {
 
 	var final []byte
 
-	// Get a new folder to work in
-	id, folder, err := setupFolder()
+	id, err := uuid.NewV4()
 	if err != nil {
 		return final, err
 	}
-	defer os.RemoveAll(folder)
 
-	if err != nil && !strings.Contains(fmt.Sprintf("%s", err), "file exists") {
+	resultFileName := id.String() + ".pdf"
+
+	directory, err := ioutil.TempDir("", "buildLatexPDF")
+	if err != nil {
 		return final, err
 	}
+	log.WithFields(logrus.Fields{"directory": directory}).Info("temp directory created")
+	defer func(path string) {
+		log.WithFields(logrus.Fields{"directory": path}).Info("removing temp directory")
+		err := os.RemoveAll(path)
+		if err != nil {
+			log.WithFields(logrus.Fields{"directory": path}).Error(err)
+		}
+	}(directory)
 
 	if len(files) == 0 {
 		return final, fmt.Errorf("must provide one or more files")
 	}
 
 	// Use our predefined settings
-	err = copyLatexSettings(folder)
+	err = copyLatexSettings(directory)
 	if err != nil {
 		return final, err
 	}
 
 	// Create the provided files in a unique folder
 	for _, f := range files {
-		err := ioutil.WriteFile(folder+"/"+f.Name, f.Data, os.ModePerm)
+		err := ioutil.WriteFile(directory+"/"+f.Name, f.Data, os.ModePerm)
 
 		if err != nil {
 			return final, err
@@ -193,8 +207,8 @@ func buildLatexPDF(ctx context.Context, files []*pb.File) ([]byte, error) {
 	clean := exec.Command("latexmk", "-C")
 	cmd := exec.Command("latexmk", fmt.Sprintf("-jobname=%s", id))
 
-	cmd.Dir = folder
-	clean.Dir = folder
+	cmd.Dir = directory
+	clean.Dir = directory
 
 	log.Printf("Cleaning...")
 	out, err := clean.Output()
@@ -213,15 +227,14 @@ func buildLatexPDF(ctx context.Context, files []*pb.File) ([]byte, error) {
 	}
 
 	// Load the produced PDF to return
-	return ioutil.ReadFile(folder + "/" + id + ".pdf")
+	return ioutil.ReadFile(directory + "/" + resultFileName)
 }
 
 func copyLatexSettings(folder string) error {
-	source, err := ioutil.ReadFile("build/.latexmkrc")
-
-	if err != nil {
-		return err
-	}
+	var latexMakeConfig = []byte(`
+$pdf_mode = 1;
+$pdflatex=q/xelatex -synctex=1 %O %S/
+`)
 
 	dest, err := os.Create(folder + "/.latexmkrc")
 
@@ -229,14 +242,35 @@ func copyLatexSettings(folder string) error {
 		return err
 	}
 
-	_, err = dest.Write(source)
+	_, err = dest.Write(latexMakeConfig)
 
 	return err
 }
 
 func mergeFiles(ctx context.Context, files []*pb.File, forceEven bool) ([]byte, error) {
+	span, _ := opentracing.StartSpanFromContext(ctx, "mergeFiles")
+	defer span.Finish()
+
 	var merged []byte
 	var prepared [][]byte // We need to store each file as a PDF first before merging
+
+	id, err := uuid.NewV4()
+	if err != nil {
+		return merged, err
+	}
+
+	directory, err := ioutil.TempDir("", "mergeFiles")
+	if err != nil {
+		return merged, err
+	}
+	log.WithFields(logrus.Fields{"directory": directory}).Info("temp directory created")
+	defer func(path string) {
+		log.WithFields(logrus.Fields{"directory": path}).Info("removing temp directory")
+		err := os.RemoveAll(path)
+		if err != nil {
+			log.WithFields(logrus.Fields{"directory": path}).Error(err)
+		}
+	}(directory)
 
 	for _, f := range files {
 		kind, unknown := filetype.Match(f.Data)
@@ -259,22 +293,15 @@ func mergeFiles(ctx context.Context, files []*pb.File, forceEven bool) ([]byte, 
 		log.Infof("file type for %s: %s (Mime: %s)", f.Name, kind.Extension, kind.MIME.Value)
 	}
 
-	// Get a new folder to work in
-	id, folder, err := setupFolder()
-	if err != nil {
-		return merged, err
-	}
-	defer os.RemoveAll(folder)
-
 	// Create the provided files in a unique folder, and note their names
-	outName := id + ".pdf"
+	outputFileName := id.String() + ".pdf"
 	var args = []string{
 		"--empty",
-		outName,
+		outputFileName,
 		"--pages",
 	}
 	for i, p := range prepared {
-		where := fmt.Sprintf("%s/%d.pdf", folder, i)
+		where := fmt.Sprintf("%s/%d.pdf", directory, i)
 		pdfFileName := fmt.Sprintf("%d.pdf", i)
 		log.Debugf("writing %d bytes to %s", len(p), where)
 
@@ -287,7 +314,7 @@ func mergeFiles(ctx context.Context, files []*pb.File, forceEven bool) ([]byte, 
 			log.Debugf("working in %s", wd)
 			// read file back and check page number, if odd then merge blank.pdf to the end
 			cmd := exec.Command("qpdf", "--show-npages", pdfFileName)
-			cmd.Dir = folder
+			cmd.Dir = directory
 			out, err := cmd.Output()
 			if err != nil {
 				return merged, fmt.Errorf("exec qpdf page count: %v", err)
@@ -302,7 +329,7 @@ func mergeFiles(ctx context.Context, files []*pb.File, forceEven bool) ([]byte, 
 
 			if isOdd {
 				blankMergeCmd := exec.Command("qpdf", "--replace-input", pdfFileName, "--pages", pdfFileName, cfg.PdfBlankPath, "--")
-				blankMergeCmd.Dir = folder
+				blankMergeCmd.Dir = directory
 				if err := blankMergeCmd.Run(); err != nil {
 					return merged, fmt.Errorf("adding blank to odd numberd pdf %d: %v", i, err)
 				}
@@ -315,7 +342,7 @@ func mergeFiles(ctx context.Context, files []*pb.File, forceEven bool) ([]byte, 
 	args = append(args, "--")
 
 	cmd := exec.Command("qpdf", args...)
-	cmd.Dir = folder
+	cmd.Dir = directory
 
 	// Merge the files
 	log.Debug("merge exec: ", cmd.String())
@@ -324,7 +351,7 @@ func mergeFiles(ctx context.Context, files []*pb.File, forceEven bool) ([]byte, 
 	}
 
 	// Load the produced PDF to return
-	merged, err = ioutil.ReadFile(folder + "/" + id + ".pdf")
+	merged, err = ioutil.ReadFile(directory + "/" + outputFileName)
 
 	if err != nil {
 		return merged, fmt.Errorf("failed reading produced PDF: %s", err)
@@ -336,46 +363,52 @@ func mergeFiles(ctx context.Context, files []*pb.File, forceEven bool) ([]byte, 
 func imageToPDF(file []byte) ([]byte, error) {
 	var pdf []byte
 
-	// Get a new folder to work in
-	id, folder, err := setupFolder()
+	id, err := uuid.NewV4()
 	if err != nil {
 		return pdf, err
 	}
-	defer os.RemoveAll(folder)
+
+	resultFileName := id.String() + ".pdf"
+
+	directory, err := ioutil.TempDir("", "imageToPDF")
+	if err != nil {
+		return pdf, err
+	}
+	log.WithFields(logrus.Fields{"directory": directory}).Info("temp directory created")
+	defer func(path string) {
+		log.WithFields(logrus.Fields{"directory": path}).Info("removing temp directory")
+		err := os.RemoveAll(path)
+		if err != nil {
+			log.WithFields(logrus.Fields{"directory": path}).Error(err)
+		}
+	}(directory)
 
 	// Save image so we can work with it
-	err = ioutil.WriteFile(folder+"/img", file, os.ModePerm)
-
+	err = ioutil.WriteFile(directory+"/img", file, os.ModePerm)
 	if err != nil {
 		return pdf, err
 	}
 
-	cmd := exec.Command("convert", "img", "-resize", "595x842", "-background", "white", "-page", "a4", id+".pdf")
-	cmd.Dir = folder
+	cmd := exec.Command(
+		"convert",
+		"img",
+		"-resize",
+		"595x842",
+		"-background",
+		"white",
+		"-page",
+		"a4",
+		resultFileName,
+	)
+	cmd.Dir = directory
 
 	// Create pdf from image
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	err = cmd.Run()
-
 	if err != nil {
 		return pdf, fmt.Errorf(err.Error() + ": " + stderr.String())
 	}
 
-	return ioutil.ReadFile(folder + "/" + id + ".pdf")
-}
-
-// setupFolder Sets up a new folder for building inside.  Returns full folder, uuid, and error
-func setupFolder() (string, string, error) {
-	var id, full string
-	v4, err := uuid.NewV4()
-	if err != nil {
-		return id, full, err
-	}
-
-	id = v4.String()
-	full = "build/" + id
-	err = os.MkdirAll(full, 0766)
-
-	return id, full, err
+	return ioutil.ReadFile(directory + "/" + resultFileName)
 }
