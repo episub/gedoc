@@ -16,8 +16,8 @@ import (
 	"github.com/caarlos0/env/v6"
 	pb "github.com/episub/gedoc/gedoc/lib"
 	"github.com/gofrs/uuid"
-	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
-	grpcopentracing "github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
+	grpcMiddleware "github.com/grpc-ecosystem/go-grpc-middleware"
+	grpcOpentracing "github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
 	"github.com/h2non/filetype"
 	"github.com/opentracing/opentracing-go"
 	"github.com/sirupsen/logrus"
@@ -40,7 +40,7 @@ var log = logrus.New()
 
 type server struct{}
 
-// BuildLatex Implements BuildLatex, taking some files and reteurning a PDF
+// BuildLatex Implements BuildLatex, taking some files and returning a PDF
 func (s *server) BuildLatex(ctx context.Context, in *pb.BuildLatexRequest) (*pb.FileReply, error) {
 	span, _ := opentracing.StartSpanFromContext(ctx, "BuildLatex")
 	defer span.Finish()
@@ -125,11 +125,11 @@ func main() {
 		log.Fatalf("failed to listen: %v", err)
 	}
 	s := grpc.NewServer(
-		grpc.StreamInterceptor(grpc_middleware.ChainStreamServer(
-			grpcopentracing.StreamServerInterceptor(),
+		grpc.StreamInterceptor(grpcMiddleware.ChainStreamServer(
+			grpcOpentracing.StreamServerInterceptor(),
 		)),
-		grpc.UnaryInterceptor(grpc_middleware.ChainUnaryServer(
-			grpcopentracing.UnaryServerInterceptor(),
+		grpc.UnaryInterceptor(grpcMiddleware.ChainUnaryServer(
+			grpcOpentracing.UnaryServerInterceptor(),
 		)),
 		grpc.MaxRecvMsgSize(1024000000),
 	)
