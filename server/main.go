@@ -20,7 +20,8 @@ import (
 	grpcOpentracing "github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
 	"github.com/h2non/filetype"
 	"github.com/opentracing/opentracing-go"
-	"github.com/sirupsen/logrus"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
@@ -33,10 +34,10 @@ type config struct {
 	DebugSpans   bool   `env:"DEBUG_SPANS" envDefault:"false"`
 	ServiceName  string `env:"SERVICE_NAME" envDefault:"gedoc"`
 	PdfBlankPath string `env:"PDF_BLANK_PATH" envDefault:"/gedoc/blank.pdf"`
+	HumanLogs    bool   `env:"HUMAN" envDefault:"false"`
 }
 
 var cfg config
-var log = logrus.New()
 
 type server struct{}
 
@@ -72,7 +73,7 @@ func (s *server) Merge(ctx context.Context, in *pb.MergeRequest) (*pb.FileReply,
 	note := "merge successful"
 
 	if err != nil {
-		log.Errorf("merge failed: %s", err)
+		log.Error().Err(err).Msg("merge failed")
 		note = err.Error()
 	}
 
@@ -94,22 +95,28 @@ func (s *server) Health(ctx context.Context, _ *pb.HealthRequest) (*pb.HealthRep
 }
 
 func main() {
-	log.Infof("gedoc service")
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+
+	log.Info().Msg("gedoc service starting")
 
 	err := env.Parse(&cfg)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal().Err(err).Msg("parsing env vars")
 	}
 
 	if cfg.Debug {
-		log.SetLevel(logrus.DebugLevel)
+		zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	}
+
+	if cfg.HumanLogs {
+		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 	}
 
 	tracer, closer := initJaeger(cfg.ServiceName)
 	defer func(closer io.Closer) {
 		err := closer.Close()
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal().Err(err).Msg("jaeger init")
 		}
 	}(closer)
 
@@ -122,7 +129,7 @@ func main() {
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.ExternalPort))
 	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
+		log.Fatal().Err(err).Msg("failed to listen")
 	}
 	s := grpc.NewServer(
 		grpc.StreamInterceptor(grpcMiddleware.ChainStreamServer(
@@ -140,7 +147,7 @@ func main() {
 	go gracefulStopChecker(s)
 
 	if err := s.Serve(lis); err != nil {
-		log.Fatalf("failed to serve: %v", err)
+		log.Fatal().Err(err).Msg("failed to serve")
 	}
 }
 
@@ -151,7 +158,7 @@ func gracefulStopChecker(s *grpc.Server) {
 	signal.Notify(gracefulStop, syscall.SIGINT)
 
 	sig := <-gracefulStop
-	fmt.Printf("caught sig: %+v", sig)
+	log.Info().Str("signal", sig.String()).Msg("caught sig")
 	if s != nil {
 		s.GracefulStop()
 	}
@@ -175,12 +182,13 @@ func buildLatexPDF(ctx context.Context, files []*pb.File) ([]byte, error) {
 	if err != nil {
 		return final, err
 	}
-	log.WithFields(logrus.Fields{"directory": directory}).Info("temp directory created")
+	directoryLogger := log.With().Str("directory", directory).Logger()
+	directoryLogger.Info().Msg("temp directory created")
 	defer func(path string) {
-		log.WithFields(logrus.Fields{"directory": path}).Info("removing temp directory")
+		directoryLogger.Info().Msg("removing temp directory")
 		err := os.RemoveAll(path)
 		if err != nil {
-			log.WithFields(logrus.Fields{"directory": path}).Error(err)
+			directoryLogger.Error().Err(err).Msg("temp directory")
 		}
 	}(directory)
 
@@ -210,19 +218,17 @@ func buildLatexPDF(ctx context.Context, files []*pb.File) ([]byte, error) {
 	cmd.Dir = directory
 	clean.Dir = directory
 
-	log.Printf("Cleaning...")
+	log.Info().Msg("cleaning")
 	out, err := clean.Output()
-
 	if err != nil {
-		log.Printf("%s", out)
+		log.Error().Err(err).Str("stdout", string(out)).Msg("running latexmk clean")
 		return final, err
 	}
 
-	log.Printf("Building...")
+	log.Printf("building")
 	out, err = cmd.Output()
-
 	if err != nil {
-		log.Printf("%s", out)
+		log.Error().Err(err).Str("stdout", string(out)).Msg("running latexmk build")
 		return final, err
 	}
 
@@ -263,12 +269,13 @@ func mergeFiles(ctx context.Context, files []*pb.File, forceEven bool) ([]byte, 
 	if err != nil {
 		return merged, err
 	}
-	log.WithFields(logrus.Fields{"directory": directory}).Info("temp directory created")
+	directoryLogger := log.With().Str("directory", directory).Logger()
+	directoryLogger.Info().Msg("temp directory created")
 	defer func(path string) {
-		log.WithFields(logrus.Fields{"directory": path}).Info("removing temp directory")
+		directoryLogger.Info().Msg("removing temp directory")
 		err := os.RemoveAll(path)
 		if err != nil {
-			log.WithFields(logrus.Fields{"directory": path}).Error(err)
+			directoryLogger.Error().Err(err).Msg("temp directory")
 		}
 	}(directory)
 
@@ -290,7 +297,11 @@ func mergeFiles(ctx context.Context, files []*pb.File, forceEven bool) ([]byte, 
 			prepared = append(prepared, converted)
 		}
 
-		log.Infof("file type for %s: %s (Mime: %s)", f.Name, kind.Extension, kind.MIME.Value)
+		log.Info().
+			Str("file_type", kind.MIME.Value).
+			Str("extension", kind.Extension).
+			Str("filename", f.Name).
+			Msg("file info")
 	}
 
 	// Create the provided files in a unique folder, and note their names
@@ -303,15 +314,16 @@ func mergeFiles(ctx context.Context, files []*pb.File, forceEven bool) ([]byte, 
 	for i, p := range prepared {
 		where := fmt.Sprintf("%s/%d.pdf", directory, i)
 		pdfFileName := fmt.Sprintf("%d.pdf", i)
-		log.Debugf("writing %d bytes to %s", len(p), where)
 
+		log.Debug().Int("bytes", len(p)).Str("file_location", where).Msg("writing file")
 		if err := ioutil.WriteFile(where, p, os.ModePerm); err != nil {
 			return merged, err
 		}
 
 		if forceEven {
 			wd, _ := os.Getwd()
-			log.Debugf("working in %s", wd)
+			log.Debug().Str("working_dir", wd).Msg("")
+
 			// read file back and check page number, if odd then merge blank.pdf to the end
 			cmd := exec.Command("qpdf", "--show-npages", pdfFileName)
 			cmd.Dir = directory
@@ -324,9 +336,13 @@ func mergeFiles(ctx context.Context, files []*pb.File, forceEven bool) ([]byte, 
 			if err != nil {
 				return merged, fmt.Errorf("show-npages output to int: %v", err)
 			}
-			isOdd := pageCount%2 == 1
-			log.Debugf("%s is %d pages long and is odd = %v", pdfFileName, pageCount, isOdd)
 
+			isOdd := pageCount%2 == 1
+			log.Debug().
+				Str("pdf_filename", pdfFileName).
+				Int("page_count", pageCount).
+				Bool("is_odd", isOdd).
+				Msg("pdf stats")
 			if isOdd {
 				blankMergeCmd := exec.Command("qpdf", "--replace-input", pdfFileName, "--pages", pdfFileName, cfg.PdfBlankPath, "--")
 				blankMergeCmd.Dir = directory
@@ -345,7 +361,7 @@ func mergeFiles(ctx context.Context, files []*pb.File, forceEven bool) ([]byte, 
 	cmd.Dir = directory
 
 	// Merge the files
-	log.Debug("merge exec: ", cmd.String())
+	log.Debug().Str("cmd", cmd.String()).Msg("running merge command")
 	if err = cmd.Run(); err != nil && !strings.Contains(err.Error(), "exit status 3") {
 		return merged, fmt.Errorf("failed merging pdf files: %s", err)
 	}
@@ -374,12 +390,13 @@ func imageToPDF(file []byte) ([]byte, error) {
 	if err != nil {
 		return pdf, err
 	}
-	log.WithFields(logrus.Fields{"directory": directory}).Info("temp directory created")
+	directoryLogger := log.With().Str("directory", directory).Logger()
+	directoryLogger.Info().Msg("temp directory created")
 	defer func(path string) {
-		log.WithFields(logrus.Fields{"directory": path}).Info("removing temp directory")
+		directoryLogger.Info().Msg("removing temp directory")
 		err := os.RemoveAll(path)
 		if err != nil {
-			log.WithFields(logrus.Fields{"directory": path}).Error(err)
+			directoryLogger.Error().Err(err).Msg("temp directory")
 		}
 	}(directory)
 

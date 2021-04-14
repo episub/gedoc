@@ -10,10 +10,11 @@ import (
 
 	pb "github.com/episub/gedoc/gedoc/lib"
 	"github.com/go-chi/chi"
-	grpc_opentracing "github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
+	grpcOpentracing "github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
 	"github.com/opentracing-contrib/go-stdlib/nethttp"
-	opentracing "github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/rs/zerolog/log"
 )
 
 const (
@@ -22,14 +23,17 @@ const (
 
 // startRouters Starts each of the external and internal routers
 func startRouters(tracer opentracing.Tracer) {
-	log.Println("Starting routers")
+	log.Info().Msg("Starting routers")
 	internalRouter := newRouter(tracer)
 	internalRouter.Get("/health", healthHandler)
 	internalRouter.Get("/live", liveHandler)
 	internalRouter.Handle("/metrics", promhttp.Handler())
 
-	log.Println(fmt.Sprintf("internal endpoints available on port %d", cfg.InternalPort))
-	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", cfg.InternalPort), internalRouter))
+	log.Info().Int("internal_port", cfg.InternalPort).Int("external_port", cfg.ExternalPort).Msg("listening on ports")
+	err := http.ListenAndServe(fmt.Sprintf(":%d", cfg.InternalPort), internalRouter)
+	if err != nil {
+		log.Fatal().Err(err).Msg("server crashed")
+	}
 }
 
 // newRouter returns a new router with all default values set
@@ -53,14 +57,14 @@ func liveHandler(w http.ResponseWriter, r *http.Request) {
 	span, _ := opentracing.StartSpanFromContext(r.Context(), "liveHandler")
 	defer span.Finish()
 
-	log.Printf("Liveness request received")
+	log.Info().Msg("liveness request received")
 	healthy, err := checkGRPCHealth(opentracing.ContextWithSpan(r.Context(), span))
 
 	if err != nil {
-		log.Warningf("Liveness report (%t) had error: %s", healthy, err)
+		log.Warn().Bool("healthy", healthy).Err(err).Msg("liveness report encountered error")
 	}
 
-	log.Printf("Health reply: %t", healthy)
+	log.Info().Bool("healthy", healthy).Msg("health reply")
 
 	if !healthy {
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -80,10 +84,10 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	healthy, err := checkGRPCHealth(opentracing.ContextWithSpan(r.Context(), span))
 
 	if err != nil {
-		log.Warningf("Liveness report (%t) had error: %s", healthy, err)
+		log.Warn().Bool("healthy", healthy).Err(err).Msg("liveness report encountered error")
 	}
 
-	log.Printf("Health reply: %t", healthy)
+	log.Info().Bool("healthy", healthy).Msg("health reply")
 
 	if !healthy {
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -100,12 +104,16 @@ func checkGRPCHealth(ctx context.Context) (bool, error) {
 	// Set up a local grpc client so that server can query itself for liveness.  This is a better simulation, to ensure that the grpc server is still receiving at least some requests
 	//conn, err := grpc.Dial(address, grpc.WithInsecure())
 	conn, err := createClientGRPCConn(opentracing.ContextWithSpan(ctx, span), address)
-
 	if err != nil {
 		return false, err
 	}
+	defer func(conn *grpc.ClientConn) {
+		err := conn.Close()
+		if err != nil {
+			log.Fatal().Err(err).Msg("closing grpc client connection")
+		}
+	}(conn)
 
-	defer conn.Close()
 	c := pb.NewBuilderClient(conn)
 
 	ctx, cancel := context.WithTimeout(ctx, time.Second*3)
@@ -127,17 +135,17 @@ func createClientGRPCConn(ctx context.Context, addr string) (*grpc.ClientConn, e
 
 	var opts []grpc.DialOption
 
-	opts = append(opts, grpc.WithStreamInterceptor(grpc_opentracing.StreamClientInterceptor()))
-	opts = append(opts, grpc.WithUnaryInterceptor(grpc_opentracing.UnaryClientInterceptor()))
+	opts = append(opts, grpc.WithStreamInterceptor(grpcOpentracing.StreamClientInterceptor()))
+	opts = append(opts, grpc.WithUnaryInterceptor(grpcOpentracing.UnaryClientInterceptor()))
 
 	opts = append(opts, grpc.WithInsecure())
 	if !cfg.Debug {
-		log.Warning("Using grpc.WithInsecure()")
+		log.Warn().Msg("using grpc in insecure mode")
 	}
 
 	conn, err := grpc.DialContext(ctx, addr, opts...)
 	if err != nil {
-		log.Error("Failed to connect to application addr: ", err)
+		log.Error().Err(err).Msg("connection to application address")
 		return nil, err
 	}
 	return conn, nil

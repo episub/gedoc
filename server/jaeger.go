@@ -4,22 +4,23 @@ import (
 	"fmt"
 	"io"
 
-	opentracing "github.com/opentracing/opentracing-go"
-	"github.com/sirupsen/logrus"
+	"github.com/opentracing/opentracing-go"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	jaegerConfig "github.com/uber/jaeger-client-go/config"
 )
 
 // jaegerLogger Logger to wrap logrus so we can use with Jaeger
 type jaegerLogger struct {
-	logger *logrus.Logger
+	logger *zerolog.Logger
 }
 
 func (j *jaegerLogger) Error(msg string) {
-	j.logger.Errorf(msg)
+	j.logger.Error().Msg(msg)
 }
 
 func (j *jaegerLogger) Infof(msg string, args ...interface{}) {
-	j.logger.Infof(msg, args...)
+	j.logger.Info().Interface("args", args).Msg(msg)
 }
 
 func initJaeger(service string) (opentracing.Tracer, io.Closer) {
@@ -33,7 +34,7 @@ func initJaeger(service string) (opentracing.Tracer, io.Closer) {
 		},
 	}
 
-	jl := jaegerLogger{log}
+	jl := jaegerLogger{&log.Logger}
 
 	tracer, closer, err := jcfg.New(service, jaegerConfig.Logger(&jl))
 	if err != nil {
