@@ -344,8 +344,10 @@ func mergeFiles(ctx context.Context, files []*pb.File, forceEven bool) ([]byte, 
 				Bool("is_odd", isOdd).
 				Msg("pdf stats")
 			if isOdd {
-				blankMergeCmd := exec.Command("qpdf", "--replace-input", pdfFileName, "--pages", pdfFileName, cfg.PdfBlankPath, "--")
+				blankMergeCmd := exec.Command("qpdf", "--warning-exit-0", "--replace-input", pdfFileName, "--pages", pdfFileName, cfg.PdfBlankPath, "--")
 				blankMergeCmd.Dir = directory
+				blankMergeCmd.Stderr = os.Stderr
+				blankMergeCmd.Stdout = os.Stdin
 				if err := blankMergeCmd.Run(); err != nil {
 					return merged, fmt.Errorf("adding blank to odd numberd pdf %d: %v", i, err)
 				}
