@@ -307,6 +307,7 @@ func mergeFiles(ctx context.Context, files []*pb.File, forceEven bool) ([]byte, 
 	// Create the provided files in a unique folder, and note their names
 	outputFileName := id.String() + ".pdf"
 	var args = []string{
+		"--warning-exit-0",
 		"--empty",
 		outputFileName,
 		"--pages",
@@ -327,6 +328,11 @@ func mergeFiles(ctx context.Context, files []*pb.File, forceEven bool) ([]byte, 
 			// read file back and check page number, if odd then merge blank.pdf to the end
 			cmd := exec.Command("qpdf", "--show-npages", pdfFileName)
 			cmd.Dir = directory
+			output := bytes.NewBufferString("")
+			cmd.Stderr = output
+			log.Info().Str("qpdf stderr", output.String()).
+				Str("qpdf cmd", cmd.String()).
+				Msg("ran show pages")
 			out, err := cmd.Output()
 			if err != nil {
 				return merged, fmt.Errorf("exec qpdf page count: %v", err)
@@ -346,9 +352,12 @@ func mergeFiles(ctx context.Context, files []*pb.File, forceEven bool) ([]byte, 
 			if isOdd {
 				blankMergeCmd := exec.Command("qpdf", "--warning-exit-0", "--replace-input", pdfFileName, "--pages", pdfFileName, cfg.PdfBlankPath, "--")
 				blankMergeCmd.Dir = directory
-				blankMergeCmd.Stderr = os.Stderr
-				blankMergeCmd.Stdout = os.Stdin
-				if err := blankMergeCmd.Run(); err != nil {
+				output, err := blankMergeCmd.CombinedOutput()
+				log.Info().
+					Str("qpdf output", string(output)).
+					Str("qpdf cmd", blankMergeCmd.String()).
+					Msg("ran blank page merge")
+				if err != nil {
 					return merged, fmt.Errorf("adding blank to odd numberd pdf %d: %v", i, err)
 				}
 			}
@@ -361,10 +370,12 @@ func mergeFiles(ctx context.Context, files []*pb.File, forceEven bool) ([]byte, 
 
 	cmd := exec.Command("qpdf", args...)
 	cmd.Dir = directory
-
-	// Merge the files
-	log.Debug().Str("cmd", cmd.String()).Msg("running merge command")
-	if err = cmd.Run(); err != nil && !strings.Contains(err.Error(), "exit status 3") {
+	output, err := cmd.CombinedOutput()
+	log.Info().
+		Str("qpdf output", string(output)).
+		Str("qpdf cmd", cmd.String()).
+		Msg("ran merge command")
+	if err != nil {
 		return merged, fmt.Errorf("failed merging pdf files: %s", err)
 	}
 
@@ -424,7 +435,11 @@ func imageToPDF(file []byte) ([]byte, error) {
 	// Create pdf from image
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-	err = cmd.Run()
+	output, err := cmd.CombinedOutput()
+	log.Info().
+		Str("convert command", cmd.String()).
+		Str("convert output", string(output)).
+		Msg("ran convert command")
 	if err != nil {
 		return pdf, fmt.Errorf(err.Error() + ": " + stderr.String())
 	}
