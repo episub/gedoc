@@ -322,9 +322,6 @@ func mergeFiles(ctx context.Context, files []*pb.File, forceEven bool) ([]byte, 
 		}
 
 		if forceEven {
-			wd, _ := os.Getwd()
-			log.Debug().Str("working_dir", wd).Msg("")
-
 			// read file back and check page number, if odd then merge blank.pdf to the end
 			cmd := exec.Command("qpdf", "--show-npages", pdfFileName)
 			cmd.Dir = directory
