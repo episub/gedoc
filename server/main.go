@@ -428,17 +428,13 @@ func imageToPDF(file []byte) ([]byte, error) {
 		resultFileName,
 	)
 	cmd.Dir = directory
-
-	// Create pdf from image
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
 	output, err := cmd.CombinedOutput()
 	log.Info().
 		Str("convert command", cmd.String()).
 		Str("convert output", string(output)).
 		Msg("ran convert command")
 	if err != nil {
-		return pdf, fmt.Errorf(err.Error() + ": " + stderr.String())
+		return pdf, fmt.Errorf(err.Error() + ": " + string(output))
 	}
 
 	return ioutil.ReadFile(directory + "/" + resultFileName)
