@@ -7,7 +7,7 @@ COPY server server
 COPY gedoc gedoc
 RUN cd server && go build -o server
 
-FROM episub/gedoc-base:1.1.0
+FROM episub/gedoc-base:1.1.2
 RUN mkdir /gedoc
 WORKDIR /gedoc
 COPY --from=builder /go/src/github.com/episub/gedoc/server/server /server
