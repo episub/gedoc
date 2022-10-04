@@ -1,10 +1,10 @@
 version: '3'
 
 vars:
-  docker_image: episub/gedoc
+  docker_image: gedoc-test
   docker_env: docker_env.txt
   docker_name: gedoc
-  docker_network: stack
+  docker_network: blhc
   docker_workdir: /go/src/github.com/episub/gedoc
   grpc_port: 50051
   metrics_port: 8281
@@ -52,7 +52,7 @@ tasks:
         -e "INTERNAL_PORT={{.metrics_port}}" \
         -e "DEBUG=true" \
         -v {{.pwd}}/server:/gedoc \
-        --name {{.docker_name}} episub/gedoc /gedoc/server
+        --name {{.docker_name}} {{.docker_image}} /gedoc/server
 
   test:
     cmds:
